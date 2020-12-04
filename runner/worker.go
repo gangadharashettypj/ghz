@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/jsonpb"
 	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/dynamic"
 	"github.com/jhump/protoreflect/dynamic/grpcdynamic"
@@ -201,6 +202,42 @@ func (w *Worker) getMessages(ctd *CallData, inputData []byte) ([]*dynamic.Messag
 	return inputs, nil
 }
 
+// ProtobufToJSON converts protocol buffer message to JSON string
+/*
+type Marshaler struct {
+    // OrigName specifies whether to use the original protobuf name for fields.
+    OrigName bool
+
+    // EnumsAsInts specifies whether to render enum values as integers,
+    // as opposed to string values.
+    EnumsAsInts bool
+
+    // EmitDefaults specifies whether to render fields with zero values.
+    EmitDefaults bool
+
+    // Indent controls whether the output is compact or not.
+    // If empty, the output is compact JSON. Otherwise, every JSON object
+    // entry and JSON array value will be on its own line.
+    // Each line will be preceded by repeated copies of Indent, where the
+    // number of copies is the current indentation depth.
+    Indent string
+
+    // AnyResolver is used to resolve the google.protobuf.Any well-known type.
+    // If unset, the global registry is used by default.
+    AnyResolver AnyResolver
+}
+*/
+func ProtobufToJSON(message proto.Message) (string, error) {
+	marshaler := jsonpb.Marshaler{
+		EnumsAsInts:  true,
+		EmitDefaults: false,
+		Indent:       "",
+		OrigName:     true,
+	}
+
+	return marshaler.MarshalToString(message)
+}
+
 func (w *Worker) makeUnaryRequest(ctx *context.Context, reqMD *metadata.MD, input *dynamic.Message) error {
 	var res proto.Message
 	var resErr error
@@ -210,12 +247,13 @@ func (w *Worker) makeUnaryRequest(ctx *context.Context, reqMD *metadata.MD, inpu
 	}
 
 	res, resErr = w.stub.InvokeRpc(*ctx, w.mtd, input, callOptions...)
-
+	data, _ := ProtobufToJSON(res)
+	out, _ := proto.Marshal(res)
 	if w.config.hasLog {
 		w.config.log.Debugw("Received response", "workerID", w.workerID, "call type", "unary",
 			"call", w.mtd.GetFullyQualifiedName(),
 			"input", input, "metadata", reqMD,
-			"response", res, "error", resErr)
+			"response", res, "response1", data, "response2", out, "error", resErr)
 	}
 
 	return resErr
