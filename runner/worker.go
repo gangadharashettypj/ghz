@@ -26,18 +26,15 @@ type TickValue struct {
 
 // Worker is used for doing a single stream of requests in parallel
 type Worker struct {
-	stub grpcdynamic.Stub
-	mtd  *desc.MethodDescriptor
-
+	stub     grpcdynamic.Stub
+	mtd      *desc.MethodDescriptor
 	config   *RunConfig
 	workerID string
 	active   bool
 	stopCh   chan bool
 	ticks    <-chan TickValue
-
 	// cached messages only for binary
 	cachedMessages []*dynamic.Message
-
 	// non-binary json optimization
 	arrayJSONData []string
 }
@@ -45,16 +42,13 @@ type Worker struct {
 func (w *Worker) runWorker() error {
 	var err error
 	g := new(errgroup.Group)
-
 	for {
 		select {
 		case <-w.stopCh:
 			if w.config.async {
 				return g.Wait()
 			}
-
 			return err
-
 		case tv := <-w.ticks:
 			if w.config.async {
 				g.Go(func() error {
@@ -73,19 +67,14 @@ func (w *Worker) Stop() {
 	if !w.active {
 		return
 	}
-
 	w.active = false
 	w.stopCh <- true
 }
-
 func (w *Worker) makeRequest(tv TickValue) error {
 	reqNum := int64(tv.reqNumber)
-
 	ctd := newCallData(w.mtd, w.config.funcs, w.workerID, reqNum)
-
 	var inputs []*dynamic.Message
 	var err error
-
 	// try the optimized path for JSON data for non client-streaming
 	if !w.config.binary && !w.mtd.IsClientStreaming() && len(w.arrayJSONData) > 0 {
 		indx := int(reqNum % int64(len(w.arrayJSONData))) // we want to start from inputs[0] so dec reqNum
@@ -97,12 +86,10 @@ func (w *Worker) makeRequest(tv TickValue) error {
 			return err
 		}
 	}
-
 	mdMap, err := ctd.executeMetadata(string(w.config.metadata))
 	if err != nil {
 		return err
 	}
-
 	var reqMD *metadata.MD
 	if len(mdMap) > 0 {
 		md := metadata.New(mdMap)
@@ -110,26 +97,21 @@ func (w *Worker) makeRequest(tv TickValue) error {
 	} else {
 		reqMD = &metadata.MD{}
 	}
-
 	if w.config.enableCompression {
 		reqMD.Append("grpc-accept-encoding", gzip.Name)
 	}
-
 	ctx := context.Background()
 	var cancel context.CancelFunc
-
 	if w.config.timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, w.config.timeout)
 	} else {
 		ctx, cancel = context.WithCancel(ctx)
 	}
 	defer cancel()
-
 	// include the metadata
 	if reqMD != nil {
 		ctx = metadata.NewOutgoingContext(ctx, *reqMD)
 	}
-
 	var callType string
 	if w.config.hasLog {
 		callType = "unary"
@@ -140,19 +122,16 @@ func (w *Worker) makeRequest(tv TickValue) error {
 		} else if w.mtd.IsClientStreaming() {
 			callType = "client-streaming"
 		}
-
 		w.config.log.Debugw("Making request", "workerID", w.workerID,
 			"call type", callType, "call", w.mtd.GetFullyQualifiedName(),
 			"input", inputs, "metadata", reqMD)
 	}
-
 	inputsLen := len(inputs)
 	if inputsLen == 0 {
 		return fmt.Errorf("no data provided for request")
 	}
 	inputIdx := int(reqNum % int64(inputsLen)) // we want to start from inputs[0] so dec reqNum
 	unaryInput := inputs[inputIdx]
-
 	// RPC errors are handled via stats handler
 	if w.mtd.IsClientStreaming() && w.mtd.IsServerStreaming() {
 		_ = w.makeBidiRequest(&ctx, inputs)
@@ -163,17 +142,13 @@ func (w *Worker) makeRequest(tv TickValue) error {
 	} else {
 		_ = w.makeUnaryRequest(&ctx, reqMD, unaryInput)
 	}
-
 	return err
 }
-
 func (w *Worker) getMessages(ctd *CallData, inputData []byte) ([]*dynamic.Message, error) {
 	var inputs []*dynamic.Message
-
 	if w.cachedMessages != nil {
 		return w.cachedMessages, nil
 	}
-
 	if !w.config.binary {
 		data, err := ctd.executeData(string(inputData))
 		if err != nil {
@@ -198,7 +173,6 @@ func (w *Worker) getMessages(ctd *CallData, inputData []byte) ([]*dynamic.Messag
 			w.cachedMessages = inputs
 		}
 	}
-
 	return inputs, nil
 }
 
@@ -207,21 +181,17 @@ func (w *Worker) getMessages(ctd *CallData, inputData []byte) ([]*dynamic.Messag
 type Marshaler struct {
     // OrigName specifies whether to use the original protobuf name for fields.
     OrigName bool
-
     // EnumsAsInts specifies whether to render enum values as integers,
     // as opposed to string values.
     EnumsAsInts bool
-
     // EmitDefaults specifies whether to render fields with zero values.
     EmitDefaults bool
-
     // Indent controls whether the output is compact or not.
     // If empty, the output is compact JSON. Otherwise, every JSON object
     // entry and JSON array value will be on its own line.
     // Each line will be preceded by repeated copies of Indent, where the
     // number of copies is the current indentation depth.
     Indent string
-
     // AnyResolver is used to resolve the google.protobuf.Any well-known type.
     // If unset, the global registry is used by default.
     AnyResolver AnyResolver
@@ -234,10 +204,8 @@ func ProtobufToJSON(message proto.Message) (string, error) {
 		Indent:       "",
 		OrigName:     true,
 	}
-
 	return marshaler.MarshalToString(message)
 }
-
 func (w *Worker) makeUnaryRequest(ctx *context.Context, reqMD *metadata.MD, input *dynamic.Message) error {
 	var res proto.Message
 	var resErr error
@@ -245,7 +213,6 @@ func (w *Worker) makeUnaryRequest(ctx *context.Context, reqMD *metadata.MD, inpu
 	if w.config.enableCompression {
 		callOptions = append(callOptions, grpc.UseCompressor(gzip.Name))
 	}
-
 	res, resErr = w.stub.InvokeRpc(*ctx, w.mtd, input, callOptions...)
 	data, _ := ProtobufToJSON(res)
 	out, _ := proto.Marshal(res)
@@ -254,11 +221,10 @@ func (w *Worker) makeUnaryRequest(ctx *context.Context, reqMD *metadata.MD, inpu
 			"call", w.mtd.GetFullyQualifiedName(),
 			"input", input, "metadata", reqMD,
 			"response", res, "response1", data, "response2", out, "error", resErr)
+		w.config.log.Debugw("json_response", "myresponse", data)
 	}
-
 	return resErr
 }
-
 func (w *Worker) makeClientStreamingRequest(ctx *context.Context, input []*dynamic.Message) error {
 	var str *grpcdynamic.ClientStream
 	var err error
@@ -267,98 +233,78 @@ func (w *Worker) makeClientStreamingRequest(ctx *context.Context, input []*dynam
 		callOptions = append(callOptions, grpc.UseCompressor(gzip.Name))
 	}
 	str, err = w.stub.InvokeRpcClientStream(*ctx, w.mtd, callOptions...)
-
 	if err != nil && w.config.hasLog {
 		w.config.log.Errorw("Invoke Client Streaming RPC call error: "+err.Error(), "workerID", w.workerID,
 			"call type", "client-streaming",
 			"call", w.mtd.GetFullyQualifiedName(), "error", err)
 	}
-
 	counter := 0
-
 	for err == nil {
 		inputLen := len(input)
 		if input == nil || inputLen == 0 {
 			res, closeErr := str.CloseAndReceive()
-
 			if w.config.hasLog {
 				w.config.log.Debugw("Close and receive", "workerID", w.workerID, "call type", "client-streaming",
 					"call", w.mtd.GetFullyQualifiedName(),
 					"response", res, "error", closeErr)
 			}
-
 			break
 		}
-
 		if counter == inputLen {
 			res, closeErr := str.CloseAndReceive()
-
 			if w.config.hasLog {
 				w.config.log.Debugw("Close and receive", "workerID", w.workerID, "call type", "client-streaming",
 					"call", w.mtd.GetFullyQualifiedName(),
 					"response", res, "error", closeErr)
 			}
-
 			break
 		}
-
 		payload := input[counter]
-
 		var wait <-chan time.Time
 		if w.config.streamInterval > 0 {
 			wait = time.Tick(w.config.streamInterval)
 			<-wait
 		}
-
 		err = str.SendMsg(payload)
-
 		if w.config.hasLog {
 			w.config.log.Debugw("Send message", "workerID", w.workerID, "call type", "client-streaming",
 				"call", w.mtd.GetFullyQualifiedName(),
 				"payload", payload, "error", err)
 		}
-
 		if err == io.EOF {
 			// We get EOF on send if the server says "go away"
 			// We have to use CloseAndReceive to get the actual code
 			res, closeErr := str.CloseAndReceive()
-
 			if w.config.hasLog {
 				w.config.log.Debugw("Close and receive", "workerID", w.workerID, "call type", "client-streaming",
 					"call", w.mtd.GetFullyQualifiedName(),
 					"response", res, "error", closeErr)
 			}
-
 			break
 		}
 		counter++
 	}
 	return nil
 }
-
 func (w *Worker) makeServerStreamingRequest(ctx *context.Context, input *dynamic.Message) error {
 	var callOptions = []grpc.CallOption{}
 	if w.config.enableCompression {
 		callOptions = append(callOptions, grpc.UseCompressor(gzip.Name))
 	}
 	str, err := w.stub.InvokeRpcServerStream(*ctx, w.mtd, input, callOptions...)
-
 	if err != nil && w.config.hasLog {
 		w.config.log.Errorw("Invoke Server Streaming RPC call error: "+err.Error(), "workerID", w.workerID,
 			"call type", "server-streaming",
 			"call", w.mtd.GetFullyQualifiedName(),
 			"input", input, "error", err)
 	}
-
 	for err == nil {
 		res, err := str.RecvMsg()
-
 		if w.config.hasLog {
 			w.config.log.Debugw("Receive message", "workerID", w.workerID, "call type", "server-streaming",
 				"call", w.mtd.GetFullyQualifiedName(),
 				"response", res, "error", err)
 		}
-
 		if err != nil {
 			if err == io.EOF {
 				err = nil
@@ -366,10 +312,8 @@ func (w *Worker) makeServerStreamingRequest(ctx *context.Context, input *dynamic
 			break
 		}
 	}
-
 	return err
 }
-
 func (w *Worker) makeBidiRequest(ctx *context.Context, input []*dynamic.Message) error {
 	var str *grpcdynamic.BidiStream
 	var err error
@@ -378,84 +322,64 @@ func (w *Worker) makeBidiRequest(ctx *context.Context, input []*dynamic.Message)
 		callOptions = append(callOptions, grpc.UseCompressor(gzip.Name))
 	}
 	str, err = w.stub.InvokeRpcBidiStream(*ctx, w.mtd, callOptions...)
-
 	if err != nil {
 		if w.config.hasLog {
 			w.config.log.Errorw("Invoke Bidi RPC call error: "+err.Error(),
 				"workerID", w.workerID, "call type", "bidi",
 				"call", w.mtd.GetFullyQualifiedName(), "error", err)
 		}
-
 		return err
 	}
-
 	counter := 0
-
 	inputLen := len(input)
-
 	recvDone := make(chan bool)
-
 	if input == nil || inputLen == 0 {
 		closeErr := str.CloseSend()
-
 		if w.config.hasLog {
 			w.config.log.Debugw("Close send", "workerID", w.workerID, "call type", "bidi",
 				"call", w.mtd.GetFullyQualifiedName(), "error", closeErr)
 		}
-
 		return nil
 	}
-
 	go func() {
 		for {
 			res, err := str.RecvMsg()
-
 			if w.config.hasLog {
 				w.config.log.Debugw("Receive message", "workerID", w.workerID, "call type", "bidi",
 					"call", w.mtd.GetFullyQualifiedName(),
 					"response", res, "error", err)
 			}
-
 			if err != nil {
 				close(recvDone)
 				break
 			}
 		}
 	}()
-
 	for err == nil {
 		if counter == inputLen {
 			closeErr := str.CloseSend()
-
 			if w.config.hasLog {
 				w.config.log.Debugw("Close send", "workerID", w.workerID, "call type", "bidi",
 					"call", w.mtd.GetFullyQualifiedName(), "error", closeErr)
 			}
-
 			break
 		}
-
 		payload := input[counter]
-
 		var wait <-chan time.Time
 		if w.config.streamInterval > 0 {
 			wait = time.Tick(w.config.streamInterval)
 			<-wait
 		}
-
 		err = str.SendMsg(payload)
 		counter++
-
 		if w.config.hasLog {
 			w.config.log.Debugw("Send message", "workerID", w.workerID, "call type", "bidi",
 				"call", w.mtd.GetFullyQualifiedName(),
 				"payload", payload, "error", err)
 		}
 	}
-
 	if err == nil {
 		<-recvDone
 	}
-
 	return nil
 }
